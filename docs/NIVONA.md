@@ -2778,6 +2778,124 @@ So current live evidence says:
   - `HR 106` (`profile`) -> `intense`
   - the bridge-side `settings-probe` now works only after performing `HU` first, exactly like the working low-level bridge path
 
+## Six-Pin Modular Service Connector
+
+The live NICR 756 has an externally accessible six-contact modular connector,
+commonly described as RJ12 or 6P6C. A repair-forum claim that a related Nivona
+connector is UART did not include a pinout, voltage measurements, baud rate, or
+captures. The measurements below therefore treat UART only as an initial lead,
+not an established interface type.
+
+### Experimental pin labels and DC levels
+
+The pin numbers in this section are the physical left-to-right labels used for
+these experiments. They are not asserted to be standard RJ12 pin numbers:
+modular plug/jack views and opposite cable ends are easily mirrored. Preserve
+this experimental numbering when comparing the captures:
+
+| Experimental pin | Analyzer connection | Powered, idle level |
+| --- | --- | --- |
+| `1` | analyzer ground | ground reference |
+| `2` | `CH0` | `0 V` / low |
+| `3` | `CH1` | `0 V` / low |
+| `4` | `CH2` | approximately `+5 V` / high |
+| `5` | `CH3` | `0 V` / low |
+| `6` | `CH4` | approximately `+5 V` / high |
+
+The DC measurements used a multimeter on its 20 V DC range with the black lead
+on experimental pin 1. They support pin 1 as the connector ground, but PCB
+continuity has not yet confirmed that assignment. The Kingst LA2016 ground was
+then attached to pin 1. The analyzer is not isolated, so this connection is
+safe only if pin 1 really is machine logic ground and the machine's low-voltage
+domain is safely referenced relative to the analyzer host.
+
+### Passive capture results
+
+All useful captures used five digital channels at 50 MHz for approximately 30
+seconds. The `.sr` files are versioned under `captures/` through Git LFS. A
+fresh clone must fetch the LFS objects for the links below to resolve to the
+actual Sigrok archives rather than LFS pointer files.
+
+| Local capture | Experiment | Result |
+| --- | --- | --- |
+| [`20260918-230323-startup2.sr`](../captures/20260918-230323-startup2.sr) | ordinary cold start | Pins 2, 3, and 5 stayed low. Pin 6 rose at about `2.2581 s`, with 183 threshold crossings confined to about `63 us`; pin 4 rose once about `23 ms` later. No subsequent traffic. |
+| [`20260918-231026-bt.sr`](../captures/20260918-231026-bt.sr) | capture started with the machine already on; several BLE operations performed | Pins 4 and 6 stayed high, pins 2, 3, and 5 stayed low, and there were zero transitions on every channel for the entire `30.048 s` capture. |
+| [`20260918-232333-svc.sr`](../captures/20260918-232333-svc.sr) | cold start into the hidden service menu; firmware version viewed and Demo Mode entered | Pin 6 showed 207 threshold crossings during about `102 us` around `4.3325 s`; pin 4 rose once about `23 ms` later. All lines were then static during service-menu navigation and Demo Mode entry. |
+| [`20260918-232929-rinse.sr`](../captures/20260918-232929-rinse.sr) | cold start followed by a rinse cycle | Pin 6 showed 149 threshold crossings during about `70 us` around `2.5609 s`; pin 4 rose once about `23 ms` later. All lines were static after `2.584 s`, including while the pump and valves operated. |
+
+The short bursts on pin 6 are not credible serial data or a clock. They are
+confined to the supply's rising edge, their transition count varies between
+starts, and they are followed by the same approximately 23 ms delay before pin
+4 rises. They are best explained as repeated digital-threshold crossings while
+an analog supply rail ramps. Pin 4 is correspondingly consistent with reset
+release or another delayed enable signal.
+
+These captures establish that the connector does **not** passively expose:
+
+- a boot log
+- BLE-to-controller traffic
+- service-menu navigation
+- Demo Mode activity
+- pump, valve, or rinse-cycle telemetry
+- an always-active UART, SPI bus, or mirror of the machine's internal runtime
+  control bus
+
+They do not exclude a service protocol that stays dormant until an external
+host transmits the first request.
+
+### Current interface hypothesis
+
+The observed behavior is compatible with a programming/debug connector:
+
+- pin 1 is a likely ground
+- pin 6 behaves like a `+5 V` target-supply rail
+- pin 4 behaves like reset/MCLR or an enable line
+- pins 2, 3, and 5 could be otherwise dormant programming/debug signals
+
+A Microchip ICSP/ICD interface is one possibility because Microchip has used a
+six-conductor modular connection for `MCLR/VPP`, `VDD`, ground, `PGD`, `PGC`,
+and `AUX/LVP`. However, the measured experimental order does not directly
+match the standard Microchip order, even allowing for the current uncertainty
+about connector perspective. The exact MCU in this NICR 756 has also not been
+verified. A report that a related NICR 767 uses a PIC18F87K22 remains a lead,
+not proof about this board. See Microchip's
+[six-pin target pinout](https://onlinedocs.microchip.com/oxy/GUID-1FB866E7-F8EE-4F6C-92ED-0F60E926A717-en-US-3/GUID-E6BF3C06-AD5E-428C-BA02-FCA445F48BC7.html)
+for comparison.
+
+If it is ICSP/ICD, “serial” means a programmer-controlled clock/data protocol,
+not UART or a terminal console. Its main potential value would be reading the
+device identity, configuration, EEPROM, or program flash. Code protection may
+prevent useful firmware reads; disabling protection commonly requires erasing
+the target. Starting an interactive debug session may also program a debug
+executive or otherwise modify the target, so a programmer should not be
+connected until the pinout and non-destructive read procedure are known.
+
+The next decisive investigation is a powered-off continuity trace from all six
+connector contacts to the controller and nearby components. In particular,
+confirm whether pins 4 and 6 reach MCU reset and supply pins, and whether pins
+2, 3, and 5 reach programming pins or a UART/level-shifter circuit. More
+passive runtime captures are unlikely to add information.
+
+### Hidden service mode observed on NICR 756
+
+A Nivona service slide dated 2013 documents a hidden service mode for NICR 757,
+767, and 777. With the appliance off, holding the right rotary control together
+with the power control for about two seconds opens a selection menu. The slide
+lists `First Start`, `System reset`, `System empty`, and `Power Off`; it also
+documents a separate two-rotary procedure for initializing the drive with the
+brewing unit removed. The source is the
+[forum attachment](https://forum.expert-cm.ru/index.php?action=dlattach;topic=6950.0;attach=6100)
+in this [NICR 757 repair thread](https://forum.expert-cm.ru/index.php?topic=6950.0).
+
+The same entry combination was live-verified on this NICR 756. Its menu also
+showed firmware-version information and a `Demo Mode` option, and Demo Mode was
+entered successfully. This proves that the 756 has a related, apparently
+extended service menu, but the menu observed so far is not a live sensor or
+actuator diagnostic display. Entering the menu produced no activity on the
+six-pin connector. Service actions can change persistent settings, empty the
+hydraulic system, or move the brewing-unit drive, so undocumented selections
+should not be invoked casually.
+
 ## Open Items
 
 - Global factory reset wire mappings are now recovered
@@ -2804,6 +2922,13 @@ So current live evidence says:
 - Full register map for:
   - diagnostics
   - full recipe slot base/count mapping and writable field coverage
+- Resolve the six-pin modular connector:
+  - photograph and fix an unambiguous plug/jack pin-numbering convention
+  - trace all contacts to the controller with the machine disconnected from
+    mains
+  - identify the MCU on the NICR 756 PCB
+  - distinguish a programming/debug header from a host-initiated service
+    interface before driving any pin
 - Older model-family string encoding
   - the bridge now documents and implements the split between UTF-16 and legacy “funny string” mode, but the full legacy character map is still not documented here
 - Clarify whether the live-only `00001530-B089-11E4-AD45-0002A5D5C51B` service has protocol relevance or is unrelated to the app path

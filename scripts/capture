@@ -1,0 +1,61 @@
+#!/bin/sh
+set -eu
+
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+repo_dir=$(dirname -- "$script_dir")
+default_cli="$HOME/.local/opt/sigrok-kingst/bin/sigrok-cli"
+sigrok_cli="${NIVONA_SIGROK_CLI:-$default_cli}"
+
+name="${NAME:-${1:-capture}}"
+duration="${DURATION:-5s}"
+rate="${RATE:-5m}"
+threshold="${THRESHOLD:-1.4}"
+channels="${CHANNELS:-CH0,CH1,CH2,CH3,CH4}"
+
+if [ ! -x "$sigrok_cli" ]; then
+    echo "Kingst-enabled sigrok-cli not found at: $sigrok_cli" >&2
+    echo "Set NIVONA_SIGROK_CLI to the executable path." >&2
+    exit 1
+fi
+
+case "$threshold" in
+    *-*) threshold_range="$threshold" ;;
+    *) threshold_range="$threshold-$threshold" ;;
+esac
+
+safe_name=$(printf '%s' "$name" | LC_ALL=C tr -cs 'A-Za-z0-9._-' '-')
+safe_name=$(printf '%s' "$safe_name" | sed 's/^-*//; s/-*$//')
+if [ -z "$safe_name" ]; then
+    echo "Capture name must contain a letter, number, dot, underscore, or dash." >&2
+    exit 2
+fi
+
+capture_dir="$repo_dir/captures"
+mkdir -p "$capture_dir"
+timestamp=$(date '+%Y%m%d-%H%M%S')
+output="$capture_dir/$timestamp-$safe_name.sr"
+
+echo "Capturing $channels for $duration at $rate samples/s."
+echo "Analyzer setup is starting; wait about one second before operating the machine."
+
+set +e
+"$sigrok_cli" \
+    --driver kingst-la2016 \
+    --config "samplerate=$rate" \
+    --config "voltage_threshold=$threshold_range" \
+    --channels "$channels" \
+    --time "$duration" \
+    --output-file "$output" \
+    --output-format srzip
+capture_status=$?
+set -e
+
+if [ "$capture_status" -ne 0 ]; then
+    if [ "$capture_status" -eq 139 ] && [ -s "$output" ] && unzip -tqq "$output"; then
+        echo "Warning: sigrok-cli crashed while closing the Kingst USB device; the capture archive is intact." >&2
+    else
+        exit "$capture_status"
+    fi
+fi
+
+echo "Saved: $output"
